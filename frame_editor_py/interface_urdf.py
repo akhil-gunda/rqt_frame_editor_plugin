@@ -2,7 +2,7 @@
 """URDF view of the frame editor: a live preview panel and a save_urdf service.
 
 Both are additional observers / services. They only read the editor model,
-except for "Apply", which goes through the normal undoable commands.
+except for "Apply code to frames", which goes through the normal undoable commands.
 """
 import difflib
 import os
@@ -131,7 +131,8 @@ class FrameEditor_URDFService(Interface):
 
 
 class FrameEditor_URDFPanel(Interface):
-    """Live URDF text of all editor frames, editable with Apply / Discard."""
+    """Live URDF text of all editor frames. After editing the code: "Apply code to frames" or
+    "Rewrite code from frames"."""
 
     signal_changed = QtCore.Signal()
 
@@ -161,25 +162,29 @@ class FrameEditor_URDFPanel(Interface):
         self.text.textChanged.connect(self.text_changed)
         layout.addWidget(self.text)
 
-        buttons = QtWidgets.QHBoxLayout()
-        self.btn_apply = QtWidgets.QPushButton("Apply")
-        self.btn_apply.setToolTip("Apply the edited URDF to the frames (one undo step)")
+        code_buttons = QtWidgets.QHBoxLayout()
+        self.btn_apply = QtWidgets.QPushButton("Apply code to frames")
+        self.btn_apply.setToolTip("Reads the URDF code above and changes the frames in the editor to match it "
+                                  "(one undo step). Code the editor cannot represent is refused.")
         self.btn_apply.clicked.connect(self.apply_clicked)
-        self.btn_discard = QtWidgets.QPushButton("Discard")
-        self.btn_discard.setToolTip("Throw away text edits and show the URDF of the current frames")
+        self.btn_discard = QtWidgets.QPushButton("Rewrite code from frames")
+        self.btn_discard.setToolTip("Throws away your edits to the code and writes it again from the "
+                                    "frames currently in the editor")
         self.btn_discard.clicked.connect(self.discard_clicked)
+        code_buttons.addWidget(self.btn_apply)
+        code_buttons.addWidget(self.btn_discard)
+        layout.addLayout(code_buttons)
+
+        export_buttons = QtWidgets.QHBoxLayout()
         self.btn_export = QtWidgets.QPushButton("Export URDF...")
         self.btn_export.clicked.connect(self.export_clicked)
-        buttons.addWidget(self.btn_apply)
-        buttons.addWidget(self.btn_discard)
-        buttons.addStretch()
-        buttons.addWidget(self.btn_export)
         self.btn_export_xacro = QtWidgets.QPushButton("Export xacro...")
         self.btn_export_xacro.setToolTip("Writes <name>.urdf.xacro and a reusable macro <name>_macro.xacro "
                                          "(with prefix, parent and origin parameters)")
         self.btn_export_xacro.clicked.connect(self.export_xacro_clicked)
-        buttons.addWidget(self.btn_export_xacro)
-        layout.addLayout(buttons)
+        export_buttons.addWidget(self.btn_export)
+        export_buttons.addWidget(self.btn_export_xacro)
+        layout.addLayout(export_buttons)
 
         self.chk_save_with_yaml = QtWidgets.QCheckBox("Also write .urdf next to the YAML on Save")
         self.chk_save_with_yaml.setChecked(True)
@@ -219,8 +224,9 @@ class FrameEditor_URDFPanel(Interface):
         if not self.widget.isVisible():
             return
         if self.dirty:
-            self.show_status("The frames changed while you were editing. Apply overwrites them with "
-                             "your text; Discard shows the current frames.", warn=True)
+            self.show_status("The frames changed while you were editing the code. 'Apply code to frames' "
+                             "overwrites them with your code; 'Rewrite code from frames' replaces your "
+                             "code with the current frames.", warn=True)
             return
         self.timer.start(self.REFRESH_DELAY_MS)
 
@@ -235,7 +241,7 @@ class FrameEditor_URDFPanel(Interface):
     def collision_toggled(self, on):
         self.editor.urdf_collision = on
         if self.dirty:
-            self.show_status("Collision setting takes effect after Apply or Discard.", warn=True)
+            self.show_status("The collision setting takes effect after 'Apply code to frames' or 'Rewrite code from frames'.", warn=True)
         else:
             self.refresh()
 
@@ -288,7 +294,7 @@ class FrameEditor_URDFPanel(Interface):
     def text_changed(self):
         if not self._setting_text and not self.dirty:
             self.set_dirty(True)
-            self.show_status("Edited: press Apply to update the frames, or Discard.")
+            self.show_status("Code edited: press 'Apply code to frames' to update the frames, or 'Rewrite code from frames' to drop your edits.")
 
     def set_dirty(self, dirty):
         self.dirty = dirty
@@ -312,9 +318,9 @@ class FrameEditor_URDFPanel(Interface):
         self.set_dirty(False)
         self.refresh(highlight=False)
         if changes:
-            self.show_status("Applied {} change(s). Undo reverts them in one step.".format(len(changes)))
+            self.show_status("Applied {} change(s) to the frames. Undo reverts them in one step.".format(len(changes)))
         else:
-            self.show_status("Nothing to apply: the text matches the frames.")
+            self.show_status("Nothing to apply: the code already matches the frames.")
 
     @Slot()
     def discard_clicked(self):
