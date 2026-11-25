@@ -53,3 +53,19 @@ def test_needs_a_single_root():
 
 def test_macro_name_is_a_valid_identifier():
     assert um.macro_name_for("1st cell-v2") == "cell_1st_cell_v2"
+
+
+def test_top_file_takes_a_tf_prefix_argument(tmp_path):
+    macro, top, _ = um.frames_to_xacro(cell(), "my_cell", "my_cell_macro.xacro")
+    (tmp_path / "my_cell_macro.xacro").write_text(macro)
+    (tmp_path / "my_cell.urdf.xacro").write_text(top)
+
+    def names(mappings):
+        text = xacro.process_file(str(tmp_path / "my_cell.urdf.xacro"), mappings=mappings).toprettyxml()
+        specs, _ = um.urdf_to_specs(text)
+        return set(specs)
+
+    plain, prefixed = names({}), names({"tf_prefix": "view_"})
+    assert "table" in plain and "view_table" in prefixed
+    assert not (plain & prefixed)                      # no frame name is shared with the editor
+    assert prefixed == {"view_" + n for n in plain}
