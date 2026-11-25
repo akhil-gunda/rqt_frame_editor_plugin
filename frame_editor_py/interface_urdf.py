@@ -1,0 +1,244 @@
+#!/usr/bin/env python3
+"""URDF view of the frame editor: a live preview panel and a save_urdf service.
+
+Both are additional observers / services. They only read the editor model,
+except for "Apply", which goes through the normal undoable commands.
+"""
+import os
+import re
+
+from python_qt_binding import QtCore, QtGui, QtWidgets
+from python_qt_binding.QtCore import QObject, Slot
+
+from frame_editor_py.interface import Interface
+from frame_editor_py import urdf_model as um
+from frame_editor_py import urdf_apply
+from frame_editor_py.urdf_model import URDFError
+
+from frame_editor.srv import SaveYaml  # same request/response shape: filename -> success, message
+
+
+def robot_name_for(editor):
+    base = os.path.splitext(editor.get_file_name())[0]
+    base = re.sub(r"[^A-Za-z0-9_]", "_", base)
+    return base or um.DEFAULT_ROBOT_NAME
+
+
+def generate_urdf(editor):
+    return um.frames_to_urdf(list(editor.frames.values()), robot_name_for(editor))
+
+
+def default_urdf_path(editor):
+    yaml_path = editor.get_full_file_path()
+    if not yaml_path:
+        return ""
+    return os.path.splitext(yaml_path)[0] + ".urdf"
+
+
+def write_urdf(editor, filename):
+    text, warnings = generate_urdf(editor)
+    with open(filename, "w") as f:
+        f.write(text)
+    return warnings
+
+
+class FrameEditor_URDFService(Interface):
+    """Service <node>/save_urdf (frame_editor/srv/SaveYaml).
+
+    Empty filename: write next to the loaded YAML, with the .urdf extension.
+    """
+
+    def __init__(self, frame_editor):
+        self.editor = frame_editor
+        self.editor.node.create_service(
+            SaveYaml, "{}/save_urdf".format(self.editor.node.get_name()), self.callback_save_urdf)
+
+    def callback_save_urdf(self, request, response):
+        filename = os.path.expanduser(request.filename) or default_urdf_path(self.editor)
+        self.editor.node.get_logger().info("> Request to save urdf file to:'{}'".format(filename))
+        if not filename:
+            response.success = False
+            response.message = "No filename given and no YAML file loaded"
+            return response
+        try:
+            warnings = write_urdf(self.editor, filename)
+            response.success = True
+            response.message = "file saved" + "".join("\nwarning: " + w for w in warnings)
+        except Exception as e:
+            response.success = False
+            response.message = "Exception: {}".format(e)
+        return response
+
+
+class FrameEditor_URDFPanel(Interface):
+    """Live URDF text of all editor frames, editable with Apply / Discard."""
+
+    signal_changed = QtCore.Signal()
+
+    REFRESH_DELAY_MS = 200  # debounce: dragging in RViz sends many updates
+
+    def __init__(self, frame_editor):
+        QObject.__init__(self)  # Interface.__init__ skips QObject; signals need it
+        self.editor = frame_editor
+        self.editor.observers.append(self)
+
+        self.dirty = False          # text edited by the user, not applied yet
+        self.stale = True           # editor changed while the panel was hidden or dirty
+        self._setting_text = False
+
+        ## Widgets
+        self.widget = QtWidgets.QGroupBox("URDF")
+        layout = QtWidgets.QVBoxLayout(self.widget)
+
+        self.status = QtWidgets.QLabel()
+        self.status.setWordWrap(True)
+        self.status.setTextInteractionFlags(QtCore.Qt.TextSelectableByMouse)
+        layout.addWidget(self.status)
+
+        self.text = QtWidgets.QPlainTextEdit()
+        self.text.setLineWrapMode(QtWidgets.QPlainTextEdit.NoWrap)
+        self.text.setFont(QtGui.QFontDatabase.systemFont(QtGui.QFontDatabase.FixedFont))
+        self.text.textChanged.connect(self.text_changed)
+        layout.addWidget(self.text)
+
+        buttons = QtWidgets.QHBoxLayout()
+        self.btn_apply = QtWidgets.QPushButton("Apply")
+        self.btn_apply.setToolTip("Apply the edited URDF to the frames (one undo step)")
+        self.btn_apply.clicked.connect(self.apply_clicked)
+        self.btn_discard = QtWidgets.QPushButton("Discard")
+        self.btn_discard.setToolTip("Throw away text edits and show the URDF of the current frames")
+        self.btn_discard.clicked.connect(self.discard_clicked)
+        self.btn_export = QtWidgets.QPushButton("Export URDF...")
+        self.btn_export.clicked.connect(self.export_clicked)
+        buttons.addWidget(self.btn_apply)
+        buttons.addWidget(self.btn_discard)
+        buttons.addStretch()
+        buttons.addWidget(self.btn_export)
+        layout.addLayout(buttons)
+
+        self.chk_save_with_yaml = QtWidgets.QCheckBox("Also write .urdf next to the YAML on Save")
+        self.chk_save_with_yaml.setChecked(True)
+        layout.addWidget(self.chk_save_with_yaml)
+
+        self.timer = QtCore.QTimer()
+        self.timer.setSingleShot(True)
+        self.timer.timeout.connect(self.refresh)
+
+        self.signal_changed.connect(self.editor_changed)
+        self.set_dirty(False)
+        self.widget.hide()
+
+    def get_widget(self):
+        return self.widget
+
+    ## Observer ##
+    ##
+    def update(self, editor, level, elements):
+        # May be called from a ROS thread (services, interactive marker): hand over to Qt.
+        self.signal_changed.emit()
+
+    @Slot()
+    def editor_changed(self):
+        self.stale = True
+        if not self.widget.isVisible():
+            return
+        if self.dirty:
+            self.show_status("The frames changed while you were editing. Apply overwrites them with "
+                             "your text; Discard shows the current frames.", warn=True)
+            return
+        self.timer.start(self.REFRESH_DELAY_MS)
+
+    ## Show / hide ##
+    ##
+    def set_visible(self, visible):
+        self.widget.setVisible(visible)
+        if visible and self.stale and not self.dirty:
+            self.refresh()
+
+    ## Text ##
+    ##
+    @Slot()
+    def refresh(self):
+        if self.dirty:
+            return
+        text, warnings = generate_urdf(self.editor)
+        scroll = self.text.verticalScrollBar().value()
+        self._setting_text = True
+        self.text.setPlainText(text)
+        self._setting_text = False
+        self.text.verticalScrollBar().setValue(scroll)
+        self.stale = False
+        if warnings:
+            self.show_status("\n".join(warnings), warn=True)
+        else:
+            self.show_status("Live: {} frames".format(len(self.editor.frames)))
+
+    @Slot()
+    def text_changed(self):
+        if not self._setting_text and not self.dirty:
+            self.set_dirty(True)
+            self.show_status("Edited: press Apply to update the frames, or Discard.")
+
+    def set_dirty(self, dirty):
+        self.dirty = dirty
+        self.btn_apply.setEnabled(dirty)
+        self.btn_discard.setEnabled(dirty)
+
+    def show_status(self, message, warn=False, error=False):
+        color = "#b00020" if error else ("#9a6700" if warn else "")
+        self.status.setStyleSheet("QLabel {{ color: {}; }}".format(color) if color else "")
+        self.status.setText(message)
+
+    ## Buttons ##
+    ##
+    @Slot()
+    def apply_clicked(self):
+        try:
+            changes = urdf_apply.apply(self.editor, self.text.toPlainText())
+        except URDFError as e:
+            self.show_status("Not applied: {}".format(e), error=True)
+            return
+        self.set_dirty(False)
+        self.refresh()
+        if changes:
+            self.show_status("Applied {} change(s). Undo reverts them in one step.".format(len(changes)))
+        else:
+            self.show_status("Nothing to apply: the text matches the frames.")
+
+    @Slot()
+    def discard_clicked(self):
+        self.set_dirty(False)
+        self.refresh()
+
+    @Slot()
+    def export_clicked(self):
+        if self.dirty:
+            QtWidgets.QMessageBox.information(
+                self.widget, "Export URDF",
+                "Your text edits are not applied yet. The export uses the current frames.")
+        filename, _ = QtWidgets.QFileDialog.getSaveFileName(
+            self.widget, "Export URDF", default_urdf_path(self.editor), "URDF files (*.urdf)")
+        if not filename:
+            return
+        if not filename.endswith(".urdf"):
+            filename += ".urdf"
+        self.export_to(filename)
+
+    def export_to(self, filename):
+        try:
+            warnings = write_urdf(self.editor, filename)
+        except Exception as e:
+            self.show_status("Export failed: {}".format(e), error=True)
+            return False
+        message = "Exported {}".format(filename)
+        if warnings:
+            message += "\n" + "\n".join(warnings)
+        self.show_status(message, warn=bool(warnings))
+        return True
+
+    def yaml_saved(self, yaml_path):
+        """Called by the GUI after a successful YAML save."""
+        if self.widget.isVisible() and self.chk_save_with_yaml.isChecked() and yaml_path:
+            self.export_to(os.path.splitext(yaml_path)[0] + ".urdf")
+
+# eof

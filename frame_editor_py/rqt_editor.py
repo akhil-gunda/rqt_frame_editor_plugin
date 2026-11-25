@@ -22,6 +22,7 @@ from frame_editor_py.interface import Interface
 
 ## Views
 from frame_editor_py.interface_gui import FrameEditor_StyleWidget, get_package_name_from_path, get_rel_path_in_ros2
+from frame_editor_py.interface_urdf import FrameEditor_URDFPanel
 from ament_index_python.packages import get_package_share_directory
 
 class LoadingTreeWidgetItem(QTreeWidgetItem):
@@ -69,6 +70,9 @@ class FrameEditorGUI(ProjectPlugin, Interface):
 
         self.editor.parse_args(context.argv())
 
+        ## URDF panel (optional, hidden by default) ##
+        self.create_urdf_toggle(context.argv())
+
         # Update filename display
         self.update_current_filename()
 
@@ -114,6 +118,10 @@ class FrameEditorGUI(ProjectPlugin, Interface):
         self.interface_style = FrameEditor_StyleWidget(self.editor)
 
         widget.style_frame.layout().addWidget(self.interface_style.get_widget())
+
+        self.interface_urdf = FrameEditor_URDFPanel(self.editor)
+        main_row = widget.findChild(QtWidgets.QHBoxLayout, "horizontalLayout_3") or widget.layout()
+        main_row.addWidget(self.interface_urdf.get_widget(), 1)
 
         ## Connections ##
         ##
@@ -519,7 +527,24 @@ class FrameEditorGUI(ProjectPlugin, Interface):
     ## BUTTONS ##
     ##
     def write_file(self, file_name):
-        return self.editor.save_file(file_name)
+        saved = self.editor.save_file(file_name)
+        if saved:
+            self.interface_urdf.yaml_saved(file_name)
+        return saved
+
+    def create_urdf_toggle(self, argv):
+        from argparse import ArgumentParser
+        parser = ArgumentParser(add_help=False)
+        parser.add_argument("--urdf", action="store_true", help="Show the URDF panel at start")
+        args, _ = parser.parse_known_args(argv)
+
+        self.action_urdf = QtWidgets.QAction("URDF", self)
+        self.action_urdf.setCheckable(True)
+        self.action_urdf.setStatusTip("Show the live URDF of the frames")
+        self.action_urdf.toggled.connect(self.interface_urdf.set_visible)
+        self.widget.mainToolBar.addSeparator()
+        self.widget.mainToolBar.addAction(self.action_urdf)
+        self.action_urdf.setChecked(args.urdf)
 
 
     @Slot()

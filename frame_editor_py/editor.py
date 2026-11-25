@@ -26,6 +26,7 @@ from frame_editor_py.interface_interactive_marker import FrameEditor_Interactive
 from frame_editor_py.interface_services import FrameEditor_Services
 from frame_editor_py.interface_markers import FrameEditor_Markers
 from frame_editor_py.interface_tf import FrameEditor_TF
+from frame_editor_py.interface_urdf import FrameEditor_URDFService
 import rclpy.logging as logging
 import random
 
@@ -419,6 +420,7 @@ class FrameEditor(QtCore.QObject):
         self.interactive = FrameEditor_InteractiveMarker(self)
         self.services = FrameEditor_Services(self)
         self.interface_markers = FrameEditor_Markers(self)
+        self.interface_urdf_service = FrameEditor_URDFService(self)
     
     def shutdown(self):
         """Clean up and shut down the ROS 2 system."""
