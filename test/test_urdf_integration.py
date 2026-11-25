@@ -180,3 +180,16 @@ def test_collision_checkbox_feeds_panel_and_service(editor, tmp_path):
 
     write_urdf(editor, str(tmp_path / "c.urdf"))                 # what save_urdf calls
     assert "<collision>" in open(str(tmp_path / "c.urdf")).read()
+
+
+def test_panel_exports_xacro_pair(editor, tmp_path):
+    xacro = pytest.importorskip("xacro")
+    from frame_editor_py.interface_urdf import FrameEditor_URDFPanel, xacro_paths
+
+    assert xacro_paths("/a/cell") == ("/a/cell.urdf.xacro", "/a/cell_macro.xacro")
+    assert xacro_paths("/a/cell.urdf.xacro") == ("/a/cell.urdf.xacro", "/a/cell_macro.xacro")
+
+    panel = FrameEditor_URDFPanel(editor)
+    assert panel.export_xacro_to(str(tmp_path / "cell.xacro"))
+    expanded = xacro.process_file(str(tmp_path / "cell.urdf.xacro")).toxml()
+    assert 'name="frames_base"' in expanded and 'name="frame_sphere"' in expanded

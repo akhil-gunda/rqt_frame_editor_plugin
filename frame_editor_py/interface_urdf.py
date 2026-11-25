@@ -57,6 +57,33 @@ def write_urdf(editor, filename):
     return warnings
 
 
+def xacro_paths(filename):
+    """'cell.urdf.xacro' (or 'cell.xacro', 'cell') -> ('cell.urdf.xacro', 'cell_macro.xacro')."""
+    for ending in (".urdf.xacro", ".xacro"):
+        if filename.endswith(ending):
+            filename = filename[:-len(ending)]
+            break
+    return filename + ".urdf.xacro", filename + "_macro.xacro"
+
+
+def default_xacro_path(editor):
+    yaml_path = editor.get_full_file_path()
+    return xacro_paths(os.path.splitext(yaml_path)[0])[0] if yaml_path else ""
+
+
+def write_xacro(editor, filename):
+    """Writes the top file and the macro file next to each other. Returns (top, macro, warnings)."""
+    top_path, macro_path = xacro_paths(filename)
+    macro, top, warnings = um.frames_to_xacro(
+        list(editor.frames.values()), robot_name_for(editor), os.path.basename(macro_path),
+        collision=getattr(editor, "urdf_collision", False))
+    with open(macro_path, "w") as f:
+        f.write(macro)
+    with open(top_path, "w") as f:
+        f.write(top)
+    return top_path, macro_path, warnings
+
+
 class FrameEditor_URDFService(Interface):
     """Service <node>/save_urdf (frame_editor/srv/SaveYaml).
 
@@ -67,6 +94,24 @@ class FrameEditor_URDFService(Interface):
         self.editor = frame_editor
         self.editor.node.create_service(
             SaveYaml, "{}/save_urdf".format(self.editor.node.get_name()), self.callback_save_urdf)
+        self.editor.node.create_service(
+            SaveYaml, "{}/save_xacro".format(self.editor.node.get_name()), self.callback_save_xacro)
+
+    def callback_save_xacro(self, request, response):
+        filename = os.path.expanduser(request.filename) or default_xacro_path(self.editor)
+        self.editor.node.get_logger().info("> Request to save xacro file to:'{}'".format(filename))
+        if not filename:
+            response.success = False
+            response.message = "No filename given and no YAML file loaded"
+            return response
+        try:
+            top, macro, warnings = write_xacro(self.editor, filename)
+            response.success = True
+            response.message = "saved {} and {}".format(top, macro) + "".join("\nwarning: " + w for w in warnings)
+        except Exception as e:
+            response.success = False
+            response.message = "Exception: {}".format(e)
+        return response
 
     def callback_save_urdf(self, request, response):
         filename = os.path.expanduser(request.filename) or default_urdf_path(self.editor)
@@ -129,6 +174,11 @@ class FrameEditor_URDFPanel(Interface):
         buttons.addWidget(self.btn_discard)
         buttons.addStretch()
         buttons.addWidget(self.btn_export)
+        self.btn_export_xacro = QtWidgets.QPushButton("Export xacro...")
+        self.btn_export_xacro.setToolTip("Writes <name>.urdf.xacro and a reusable macro <name>_macro.xacro "
+                                         "(with prefix, parent and origin parameters)")
+        self.btn_export_xacro.clicked.connect(self.export_xacro_clicked)
+        buttons.addWidget(self.btn_export_xacro)
         layout.addLayout(buttons)
 
         self.chk_save_with_yaml = QtWidgets.QCheckBox("Also write .urdf next to the YAML on Save")
@@ -292,6 +342,29 @@ class FrameEditor_URDFPanel(Interface):
             self.show_status("Export failed: {}".format(e), error=True)
             return False
         message = "Exported {}".format(filename)
+        if warnings:
+            message += "\n" + "\n".join(warnings)
+        self.show_status(message, warn=bool(warnings))
+        return True
+
+    @Slot()
+    def export_xacro_clicked(self):
+        if self.dirty:
+            QtWidgets.QMessageBox.information(
+                self.widget, "Export xacro",
+                "Your text edits are not applied yet. The export uses the current frames.")
+        filename, _ = QtWidgets.QFileDialog.getSaveFileName(
+            self.widget, "Export xacro", default_xacro_path(self.editor), "xacro files (*.xacro)")
+        if filename:
+            self.export_xacro_to(filename)
+
+    def export_xacro_to(self, filename):
+        try:
+            top, macro, warnings = write_xacro(self.editor, filename)
+        except Exception as e:
+            self.show_status("xacro export failed: {}".format(e), error=True)
+            return False
+        message = "Exported {}\nand macro {}".format(top, macro)
         if warnings:
             message += "\n" + "\n".join(warnings)
         self.show_status(message, warn=bool(warnings))
