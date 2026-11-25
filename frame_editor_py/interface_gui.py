@@ -231,13 +231,12 @@ class FrameEditor_StyleWidget(Interface):
     def btn_color_clicked(self):
         frame = self.editor.active_frame
         color = QtWidgets.QColorDialog.getColor(
-            QColor(frame.color[0]*255, 
-            frame.color[1]*255,
-            frame.color[2]*255,
-            frame.color[3]*255),
+            QColor(*[int(round(c*255)) for c in frame.color]),  # Qt needs ints
             None,
             "Select Color",
             options=QtWidgets.QColorDialog.ShowAlphaChannel)
+        if not color.isValid():
+            return  # dialog cancelled
         self.editor.command(Command_SetStyleColor(self.editor, frame, color.getRgbF()))
 
 # eof

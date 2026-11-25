@@ -139,3 +139,10 @@ def test_panel_follows_editor_and_saves_with_yaml(editor, tmp_path):
     panel.yaml_saved(yaml_path)
     assert open(str(tmp_path / "cell.urdf")).read() == urdf(editor)
     assert "Exported" in panel.status.text()
+
+
+def test_color_edit_in_text_applies(editor):
+    text = urdf(editor).replace('rgba="0 0.5 0.5 0.75"', 'rgba="1 0 0 1"')
+    changes = urdf_apply.apply(editor, text)
+    assert {(c.kind, c.name) for c in changes} == {("color", "frame_sphere")}
+    assert tuple(editor.frames["frame_sphere"].color) == (1.0, 0.0, 0.0, 1.0)
