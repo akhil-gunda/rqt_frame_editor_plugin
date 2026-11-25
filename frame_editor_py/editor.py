@@ -250,44 +250,32 @@ class FrameEditor(QtCore.QObject):
             f["group"] = frame.group
 
             if frame.style == "plane":
-                f["data"] = { "length": frame.length, "width":frame.width, "color": frame.color }
+                f["data"] = { "length": frame.length, "width":frame.width, "color": [float(c) for c in frame.color] }
 
             elif frame.style == "cube":
-                f["data"] = { "length": frame.length, "width": frame.width, "height": frame.height , "color": frame.color}
+                f["data"] = { "length": frame.length, "width": frame.width, "height": frame.height , "color": [float(c) for c in frame.color]}
 
             elif frame.style == "sphere":
-                f["data"] = { "diameter": frame.diameter, "color": frame.color }
+                f["data"] = { "diameter": frame.diameter, "color": [float(c) for c in frame.color] }
 
             elif frame.style == "axis":
-                f["data"] = { "length": frame.length, "width": frame.width, "color": frame.color }
+                f["data"] = { "length": frame.length, "width": frame.width, "color": [float(c) for c in frame.color] }
 
             elif frame.style == "mesh":
                 self.update_file_format(frame)
-                f["data"] = { "package" : frame.package, "path" : frame.path, "scale" : frame.scale, "color": frame.color }
+                f["data"] = { "package" : frame.package, "path" : frame.path, "scale" : frame.scale, "color": [float(c) for c in frame.color] }
 
             frames[frame.name] = f
 
         data["frames"] = frames
 
-        ## To parameter server
-        self.node.set_parameters([Parameter(self.namespace, value=data)])
-
-        # Getting the parameter and printing its value
-        param = self.get_parameter(self.namespace)
-        self.node.get_logger().info(param.value)
-        
-        ## Dump param to file
+        ## Dump to file
+        # (ROS 2 parameters cannot hold nested dicts, so the ROS 1 style
+        # "write to parameter server first" step is not possible here.)
         if filename == '':
             filename = self.full_file_path
         self.node.get_logger().info("Saving to file {}".format(filename))
-        
-        parameters = self.node.get_parameters_by_prefix(self.namespace)
-        for param in parameters:
-            if isinstance(param, Parameter):
-                data[param.name] = param.value
-            else:
-                self.node.get_logger().info(f"Unknown parameter type: {type(param)}")
-                
+
         with open(filename, 'w') as file:
             yaml.dump(data, file)
             
