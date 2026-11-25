@@ -25,3 +25,21 @@ def test_cancelling_keeps_the_colour(editor, monkeypatch):
     before = tuple(editor.frames["frame_sphere"].color)
     frame = press_color_button(editor, monkeypatch, QColor())  # invalid colour = cancelled
     assert tuple(frame.color) == before
+
+
+def test_alpha_field_changes_only_transparency(editor):
+    from frame_editor_py.interface_urdf import generate_urdf
+    editor.active_frame = editor.frames["frame_sphere"]
+    widget = FrameEditor_StyleWidget(editor)
+    widget.update_color_label(editor.active_frame)
+    assert widget.alpha_spinbox.value() == pytest.approx(0.75)
+
+    widget.alpha_spinbox.setValue(0.3)
+    widget.alpha_changed()
+    frame = editor.frames["frame_sphere"]
+    assert tuple(frame.color) == pytest.approx((0.0, 0.5, 0.5, 0.3))
+    assert frame.marker.color.a == pytest.approx(0.3)
+    assert 'rgba="0 0.5 0.5 0.3"' in generate_urdf(editor)[0]
+
+    editor.undo_stack.undo()
+    assert editor.frames["frame_sphere"].color[3] == pytest.approx(0.75)

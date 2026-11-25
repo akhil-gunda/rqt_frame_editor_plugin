@@ -79,6 +79,15 @@ class FrameEditor_StyleWidget(Interface):
         self.color_button = QtWidgets.QPushButton("Set Color")
         self.color_button.clicked.connect(lambda: self.btn_color_clicked())
 
+        self.alpha_label = QtWidgets.QLabel("Alpha:")
+        self.alpha_label.setToolTip("Transparency: 0 = invisible, 1 = solid (URDF rgba, 4th value)")
+        self.alpha_spinbox = QtWidgets.QDoubleSpinBox()
+        self.alpha_spinbox.setRange(0.0, 1.0)
+        self.alpha_spinbox.setSingleStep(0.05)
+        self.alpha_spinbox.setDecimals(2)
+        self.alpha_spinbox.setToolTip(self.alpha_label.toolTip())
+        self.alpha_spinbox.editingFinished.connect(lambda: self.alpha_changed())
+
         self.layout.addWidget(self.mesh_label, 0, 0)
         self.layout.addWidget(self.mesh_button, 0, 1)
         self.layout.addWidget(self.diameter_label, 1, 0)
@@ -93,6 +102,8 @@ class FrameEditor_StyleWidget(Interface):
         self.layout.addWidget(self.color_button, 5, 1)
         self.layout.addWidget(self.size_label, 6, 0)
         self.layout.addWidget(self.size_spinbox, 6, 1)
+        self.layout.addWidget(self.alpha_label, 7, 0)
+        self.layout.addWidget(self.alpha_spinbox, 7, 1)
 
 
         self.update_widget(None)
@@ -178,6 +189,21 @@ class FrameEditor_StyleWidget(Interface):
         else:
             values = "{}, {}, {}, {}".format(frame.color[0]*255, frame.color[1]*255, frame.color[2]*255, frame.color[3]*255)
         self.color_label.setStyleSheet("QLabel { background-color: rgba("+values+"); }")
+        if frame is not None:
+            self.alpha_spinbox.blockSignals(True)
+            self.alpha_spinbox.setValue(frame.color[3])
+            self.alpha_spinbox.blockSignals(False)
+
+    @Slot()
+    def alpha_changed(self):
+        frame = self.editor.active_frame
+        if frame is None or frame.marker is None:
+            return
+        alpha = self.alpha_spinbox.value()
+        if abs(frame.color[3] - alpha) < 1e-6:
+            return
+        r, g, b = frame.color[0], frame.color[1], frame.color[2]
+        self.editor.command(Command_SetStyleColor(self.editor, frame, (r, g, b, alpha)))
 
     @Slot(float)
     def diameter_changed(self):
