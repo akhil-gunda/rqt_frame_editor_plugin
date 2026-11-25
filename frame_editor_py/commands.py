@@ -164,6 +164,9 @@ class Command_CopyElement(QUndoCommand):
         if source_name in self.editor.frames:
             element = copy.deepcopy(self.editor.frames[source_name])
             element.name = new_name
+            if element.marker is not None:
+                # RViz keys markers by namespace + id: a copied id would hide one of the two shapes
+                element.marker.id = Frame.create_new_id()
         else:
             element = Frame(new_name, parent=parent_name)
         element.parent = parent_name
