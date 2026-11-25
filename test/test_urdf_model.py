@@ -125,7 +125,7 @@ def test_diff_add_and_remove():
 
 @pytest.mark.parametrize("old,new,message", [
     ('type="fixed"', 'type="revolute"', "only type"),
-    ("<visual>", "<collision/><visual>", "collision"),
+    ("<visual>", "<inertial/><visual>", "inertial"),
     ('<sphere radius="0.05"/>', '<cylinder radius="0.05" length="1"/>', "cylinder"),
     ('<parent link="table"/>', '<parent link="nope"/>', "not defined"),
     ('<link name="world"/>', '<link name="world"><visual><geometry><box size="1 1 1"/></geometry></visual></link>', "root link"),
@@ -151,4 +151,30 @@ def test_parent_loop_rejected():
             '<joint name="1" type="fixed"><parent link="a"/><child link="b"/></joint>'
             '<joint name="2" type="fixed"><parent link="b"/><child link="a"/></joint></robot>')
     with pytest.raises(URDFError, match="loop"):
+        um.urdf_to_specs(text)
+
+
+def test_collision_export_and_roundtrip():
+    frames = cell()
+    text, _ = um.frames_to_urdf(frames, collision=True)
+    assert text.count("<collision>") == 4  # table, camera, floor, gripper have shapes
+    assert "<collision>\n      <geometry>\n        <box size=\"1.2 0.8 0.8\"/>" in text
+    wanted, _ = um.urdf_to_specs(text)
+    assert um.diff_specs(um.specs_from_frames(frames), wanted) == []
+    assert "<collision>" not in um.frames_to_urdf(frames)[0]  # off by default
+
+
+def test_collision_must_match_visual():
+    text, _ = um.frames_to_urdf(cell(), collision=True)
+    bad = text.replace('<sphere radius="0.05"/>\n      </geometry>\n    </collision>',
+                       '<sphere radius="0.5"/>\n      </geometry>\n    </collision>')
+    assert bad != text
+    with pytest.raises(URDFError, match="same as the <visual>"):
+        um.urdf_to_specs(bad)
+
+
+def test_collision_without_visual_rejected():
+    text = edited('<link name="robot_base"/>',
+                  '<link name="robot_base"><collision><geometry><box size="1 1 1"/></geometry></collision></link>')
+    with pytest.raises(URDFError, match="needs a matching <visual>"):
         um.urdf_to_specs(text)

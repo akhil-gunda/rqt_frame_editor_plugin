@@ -176,8 +176,22 @@ def tree_order(specs):
 
 ## Specs -> URDF text ##
 ##
-def frames_to_urdf(frames, robot_name=DEFAULT_ROBOT_NAME):
-    """Editor frames -> (urdf_text, warnings)."""
+def _geometry_lines(geometry, indent):
+    kind = geometry[0]
+    if kind == "box":
+        shape = '<box size="{}"/>'.format(fmt_vec(geometry[1]))
+    elif kind == "sphere":
+        shape = '<sphere radius="{}"/>'.format(fmt(geometry[1]))
+    else:
+        shape = '<mesh filename={} scale="{}"/>'.format(quoteattr(geometry[1]), fmt_vec((geometry[2],) * 3))
+    return [indent + "<geometry>", indent + "  " + shape, indent + "</geometry>"]
+
+
+def frames_to_urdf(frames, robot_name=DEFAULT_ROBOT_NAME, collision=False):
+    """Editor frames -> (urdf_text, warnings).
+
+    collision: also write each shape as a <collision> element (same geometry).
+    """
     frames = [f for f in frames if not is_temporary(f.name)]
     specs = specs_from_frames(frames)
     styles = {f.name: getattr(f, "style", "none") for f in frames}
@@ -217,23 +231,18 @@ def frames_to_urdf(frames, robot_name=DEFAULT_ROBOT_NAME):
             out.append("  <link name={}/>".format(quoteattr(name)))
         else:
             out.append("  <link name={}>".format(quoteattr(name)))
+            if spec.geometry[0] == "mesh" and not spec.geometry[1].startswith("package://"):
+                warnings.append("'{}': mesh uses an absolute path; package:// paths are more portable.".format(name))
             out.append("    <visual>")
-            out.append("      <geometry>")
-            kind = spec.geometry[0]
-            if kind == "box":
-                out.append('        <box size="{}"/>'.format(fmt_vec(spec.geometry[1])))
-            elif kind == "sphere":
-                out.append('        <sphere radius="{}"/>'.format(fmt(spec.geometry[1])))
-            elif kind == "mesh":
-                uri, scale = spec.geometry[1], spec.geometry[2]
-                if uri.startswith("file://") or not uri.startswith("package://"):
-                    warnings.append("'{}': mesh uses an absolute path; package:// paths are more portable.".format(name))
-                out.append('        <mesh filename={} scale="{}"/>'.format(quoteattr(uri), fmt_vec((scale,) * 3)))
-            out.append("      </geometry>")
+            out.extend(_geometry_lines(spec.geometry, "      "))
             out.append("      <material name={}>".format(quoteattr(name + "_material")))
             out.append('        <color rgba="{}"/>'.format(fmt_vec(spec.color)))
             out.append("      </material>")
             out.append("    </visual>")
+            if collision:
+                out.append("    <collision>")
+                out.extend(_geometry_lines(spec.geometry, "      "))
+                out.append("    </collision>")
             out.append("  </link>")
 
         joint_name = "{}_to_{}".format(spec.parent, name)
@@ -281,16 +290,39 @@ def _origin(element, what):
 
 def _parse_visual(link, name):
     visuals = link.findall("visual")
+    collisions = link.findall("collision")
     if not visuals:
+        if collisions:
+            raise URDFError("link '{}': a <collision> needs a matching <visual>".format(name))
         return None, None
     if len(visuals) > 1:
         raise URDFError("link '{}': only one <visual> per link is supported".format(name))
     visual = visuals[0]
-    xyz, rpy = _origin(visual, "link '{}' visual".format(name))
+    geometry = _parse_shape(visual, name, "visual")
+
+    # <collision> is accepted only as a copy of the visual shape: the editor keeps one shape.
+    if len(collisions) > 1:
+        raise URDFError("link '{}': only one <collision> per link is supported".format(name))
+    if collisions and not _geometry_equal(_parse_shape(collisions[0], name, "collision"), geometry):
+        raise URDFError("link '{}': the <collision> shape must be the same as the <visual> shape "
+                        "(the frame editor stores one shape per frame)".format(name))
+
+    color = None
+    material = visual.find("material")
+    if material is not None:
+        color_el = material.find("color")
+        if color_el is not None:
+            color = tuple(_floats(color_el.get("rgba", ""), 4, "link '{}' color rgba".format(name)))
+    return geometry, color
+
+
+def _parse_shape(element, name, what):
+    """<visual> or <collision> -> geometry tuple."""
+    xyz, rpy = _origin(element, "link '{}' {}".format(name, what))
     if any(abs(v) > POS_TOL for v in xyz + rpy):
-        raise URDFError("link '{}': a <visual> <origin> is not supported, the shape sits on the "
-                        "link origin. Move the joint instead, or add a child link.".format(name))
-    geometry_el = visual.find("geometry")
+        raise URDFError("link '{}': a <{}> <origin> is not supported, the shape sits on the "
+                        "link origin. Move the joint instead, or add a child link.".format(name, what))
+    geometry_el = element.find("geometry")
     if geometry_el is None or len(list(geometry_el)) != 1:
         raise URDFError("link '{}': <geometry> needs exactly one shape".format(name))
     shape = list(geometry_el)[0]
@@ -308,17 +340,10 @@ def _parse_visual(link, name):
         geometry = ("mesh", filename, scale[0])
     else:
         raise URDFError("link '{}': <{}> is not supported (use box, sphere or mesh)".format(name, shape.tag))
-
-    color = None
-    material = visual.find("material")
-    if material is not None:
-        color_el = material.find("color")
-        if color_el is not None:
-            color = tuple(_floats(color_el.get("rgba", ""), 4, "link '{}' color rgba".format(name)))
-    return geometry, color
+    return geometry
 
 
-SUPPORTED_LINK_TAGS = {"visual"}
+SUPPORTED_LINK_TAGS = {"visual", "collision"}
 SUPPORTED_JOINT_TAGS = {"parent", "child", "origin"}
 
 
