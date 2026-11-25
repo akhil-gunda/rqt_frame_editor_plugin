@@ -4,6 +4,7 @@
 Both are additional observers / services. They only read the editor model,
 except for "Apply", which goes through the normal undoable commands.
 """
+import difflib
 import os
 import re
 
@@ -25,7 +26,21 @@ def robot_name_for(editor):
 
 
 def generate_urdf(editor):
-    return um.frames_to_urdf(list(editor.frames.values()), robot_name_for(editor))
+    # urdf_collision is set by the panel's checkbox; the service uses the same setting.
+    return um.frames_to_urdf(list(editor.frames.values()), robot_name_for(editor),
+                             collision=getattr(editor, "urdf_collision", False))
+
+
+def changed_lines(old_text, new_text):
+    """Line numbers (0-based) in new_text that are new or changed, and how many old lines were removed."""
+    old_lines, new_lines = old_text.splitlines(), new_text.splitlines()
+    changed, removed = [], 0
+    for tag, i1, i2, j1, j2 in difflib.SequenceMatcher(None, old_lines, new_lines, autojunk=False).get_opcodes():
+        if tag in ("replace", "insert"):
+            changed.extend(range(j1, j2))
+        if tag in ("replace", "delete"):
+            removed += max(0, (i2 - i1) - (j2 - j1))
+    return changed, removed
 
 
 def default_urdf_path(editor):
@@ -120,6 +135,17 @@ class FrameEditor_URDFPanel(Interface):
         self.chk_save_with_yaml.setChecked(True)
         layout.addWidget(self.chk_save_with_yaml)
 
+        self.chk_collision = QtWidgets.QCheckBox("Add collision shapes (same as the visual shape)")
+        self.chk_collision.setToolTip("Writes each shape a second time as <collision>, which planners "
+                                      "such as MoveIt use for collision checking")
+        self.chk_collision.toggled.connect(self.collision_toggled)
+        layout.addWidget(self.chk_collision)
+
+        self.chk_highlight = QtWidgets.QCheckBox("Highlight lines changed by the last edit")
+        self.chk_highlight.setChecked(True)
+        self.chk_highlight.toggled.connect(lambda on: on or self.text.setExtraSelections([]))
+        layout.addWidget(self.chk_highlight)
+
         self.timer = QtCore.QTimer()
         self.timer.setSingleShot(True)
         self.timer.timeout.connect(self.refresh)
@@ -153,14 +179,22 @@ class FrameEditor_URDFPanel(Interface):
     def set_visible(self, visible):
         self.widget.setVisible(visible)
         if visible and self.stale and not self.dirty:
+            self.refresh(highlight=False)
+
+    @Slot(bool)
+    def collision_toggled(self, on):
+        self.editor.urdf_collision = on
+        if self.dirty:
+            self.show_status("Collision setting takes effect after Apply or Discard.", warn=True)
+        else:
             self.refresh()
 
     ## Text ##
     ##
-    @Slot()
-    def refresh(self):
+    def refresh(self, highlight=True):
         if self.dirty:
             return
+        old_text = self.text.toPlainText()
         text, warnings = generate_urdf(self.editor)
         scroll = self.text.verticalScrollBar().value()
         self._setting_text = True
@@ -168,10 +202,37 @@ class FrameEditor_URDFPanel(Interface):
         self._setting_text = False
         self.text.verticalScrollBar().setValue(scroll)
         self.stale = False
+
+        changed, removed = [], 0
+        if highlight and old_text and self.chk_highlight.isChecked():
+            changed, removed = changed_lines(old_text, text)
+        self.highlight_lines(changed)
+
+        status = "Live: {} frames".format(len(self.editor.frames))
+        if changed or removed:
+            status += " | last edit: {} line(s) changed or added, {} removed".format(len(changed), removed)
         if warnings:
-            self.show_status("\n".join(warnings), warn=True)
+            self.show_status(status + "\n" + "\n".join(warnings), warn=True)
         else:
-            self.show_status("Live: {} frames".format(len(self.editor.frames)))
+            self.show_status(status)
+
+    def highlight_lines(self, line_numbers):
+        """Yellow background on the given lines; scrolls the first one into view."""
+        selections = []
+        fmt = QtGui.QTextCharFormat()
+        fmt.setBackground(QtGui.QColor(255, 236, 150))
+        fmt.setForeground(QtGui.QColor(0, 0, 0))
+        fmt.setProperty(QtGui.QTextFormat.FullWidthSelection, True)
+        document = self.text.document()
+        for line in line_numbers:
+            selection = QtWidgets.QTextEdit.ExtraSelection()
+            selection.format = fmt
+            selection.cursor = QtGui.QTextCursor(document.findBlockByLineNumber(line))
+            selections.append(selection)
+        self.text.setExtraSelections(selections)
+        if line_numbers:
+            self.text.setTextCursor(QtGui.QTextCursor(document.findBlockByLineNumber(line_numbers[0])))
+            self.text.ensureCursorVisible()
 
     @Slot()
     def text_changed(self):
@@ -199,7 +260,7 @@ class FrameEditor_URDFPanel(Interface):
             self.show_status("Not applied: {}".format(e), error=True)
             return
         self.set_dirty(False)
-        self.refresh()
+        self.refresh(highlight=False)
         if changes:
             self.show_status("Applied {} change(s). Undo reverts them in one step.".format(len(changes)))
         else:
@@ -208,7 +269,7 @@ class FrameEditor_URDFPanel(Interface):
     @Slot()
     def discard_clicked(self):
         self.set_dirty(False)
-        self.refresh()
+        self.refresh(highlight=False)
 
     @Slot()
     def export_clicked(self):

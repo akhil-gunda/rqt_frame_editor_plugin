@@ -146,3 +146,37 @@ def test_color_edit_in_text_applies(editor):
     changes = urdf_apply.apply(editor, text)
     assert {(c.kind, c.name) for c in changes} == {("color", "frame_sphere")}
     assert tuple(editor.frames["frame_sphere"].color) == (1.0, 0.0, 0.0, 1.0)
+
+
+def test_changed_lines_are_highlighted(editor):
+    from frame_editor_py.commands import Command_SetValue
+    from frame_editor_py.interface_urdf import FrameEditor_URDFPanel
+
+    panel = FrameEditor_URDFPanel(editor)
+    panel.set_visible(True)
+    assert panel.text.extraSelections() == []  # first fill: nothing highlighted
+
+    editor.command(Command_SetValue(editor, editor.frames["frame1"], "z", 0.9))
+    QApplication.processEvents()
+    panel.refresh()
+    highlighted = [s.cursor.block().text().strip() for s in panel.text.extraSelections()]
+    assert highlighted == ['<origin xyz="0.5 0.5 0.9" rpy="0 0 0"/>']
+    assert "1 line(s) changed" in panel.status.text()
+
+    panel.chk_highlight.setChecked(False)
+    assert panel.text.extraSelections() == []
+
+
+def test_collision_checkbox_feeds_panel_and_service(editor, tmp_path):
+    from frame_editor_py.interface_urdf import FrameEditor_URDFPanel, write_urdf
+
+    panel = FrameEditor_URDFPanel(editor)
+    panel.set_visible(True)
+    assert "<collision>" not in panel.text.toPlainText()
+    panel.chk_collision.setChecked(True)
+    assert panel.text.toPlainText().count("<collision>") == 1  # only frame_sphere has a shape
+    assert len(panel.text.extraSelections()) == 5              # the new <collision> block
+    assert urdf_apply.apply(editor, panel.text.toPlainText()) == []  # round trip: nothing to change
+
+    write_urdf(editor, str(tmp_path / "c.urdf"))                 # what save_urdf calls
+    assert "<collision>" in open(str(tmp_path / "c.urdf")).read()
