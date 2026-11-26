@@ -18,7 +18,8 @@ def expand(tmp_path, macro_text, top_text, macro_file="my_cell_macro.xacro"):
 def test_expands_to_the_same_cell(tmp_path):
     frames = cell()
     macro, top, _ = um.frames_to_xacro(frames, "my_cell", "my_cell_macro.xacro", collision=True)
-    assert "${prefix}table" in macro and '<xacro:insert_block name="origin"/>' in macro
+    assert "prefix" not in macro + top
+    assert '<link name="table">' in macro and '<xacro:insert_block name="origin"/>' in macro
 
     expanded, roots = um.urdf_to_specs(expand(tmp_path, macro, top))
     assert roots == ["world"]
@@ -33,17 +34,17 @@ def test_expands_to_the_same_cell(tmp_path):
     assert um.diff_specs(original, expanded) == []
 
 
-def test_macro_can_be_used_twice_with_prefixes(tmp_path):
+def test_macro_attaches_to_another_robot(tmp_path):
     macro, _, _ = um.frames_to_xacro(cell(), "my_cell", "my_cell_macro.xacro")
-    top = ('<robot name="two" xmlns:xacro="http://www.ros.org/wiki/xacro">'
-           '<xacro:include filename="my_cell_macro.xacro"/><link name="world"/>'
-           '<xacro:my_cell parent="world" prefix="left_"><origin xyz="0 0 0" rpy="0 0 0"/></xacro:my_cell>'
-           '<xacro:my_cell parent="world" prefix="right_"><origin xyz="3 0 0" rpy="0 0 0"/></xacro:my_cell>'
+    top = ('<robot name="big" xmlns:xacro="http://www.ros.org/wiki/xacro">'
+           '<xacro:include filename="my_cell_macro.xacro"/><link name="hall_floor"/>'
+           '<xacro:my_cell parent="hall_floor"><origin xyz="3 0 0" rpy="0 0 0"/></xacro:my_cell>'
            "</robot>")
-    specs, _ = um.urdf_to_specs(expand(tmp_path, macro, top))
-    assert {"left_table", "right_table", "left_camera", "right_camera"} <= set(specs)
-    assert specs["right_my_cell_base"].position == (3.0, 0.0, 0.0)
-    assert specs["left_robot_base"].parent == "left_table"
+    specs, roots = um.urdf_to_specs(expand(tmp_path, macro, top))
+    assert roots == ["hall_floor"]
+    assert specs["my_cell_base"].parent == "hall_floor"
+    assert specs["my_cell_base"].position == (3.0, 0.0, 0.0)
+    assert specs["robot_base"].parent == "table"
 
 
 def test_needs_a_single_root():
@@ -53,19 +54,3 @@ def test_needs_a_single_root():
 
 def test_macro_name_is_a_valid_identifier():
     assert um.macro_name_for("1st cell-v2") == "cell_1st_cell_v2"
-
-
-def test_top_file_takes_a_tf_prefix_argument(tmp_path):
-    macro, top, _ = um.frames_to_xacro(cell(), "my_cell", "my_cell_macro.xacro")
-    (tmp_path / "my_cell_macro.xacro").write_text(macro)
-    (tmp_path / "my_cell.urdf.xacro").write_text(top)
-
-    def names(mappings):
-        text = xacro.process_file(str(tmp_path / "my_cell.urdf.xacro"), mappings=mappings).toprettyxml()
-        specs, _ = um.urdf_to_specs(text)
-        return set(specs)
-
-    plain, prefixed = names({}), names({"tf_prefix": "view_"})
-    assert "table" in plain and "view_table" in prefixed
-    assert not (plain & prefixed)                      # no frame name is shared with the editor
-    assert prefixed == {"view_" + n for n in plain}

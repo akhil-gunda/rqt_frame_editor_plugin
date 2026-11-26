@@ -218,7 +218,7 @@ class FrameEditor_URDFPanel(Interface):
         self.btn_export.clicked.connect(self.export_clicked)
         self.btn_export_xacro = QtWidgets.QPushButton("Export xacro...")
         self.btn_export_xacro.setToolTip("Writes <name>.urdf.xacro and a reusable macro <name>_macro.xacro "
-                                         "(with prefix, parent and origin parameters)")
+                                         "(with parent and origin parameters)")
         self.btn_export_xacro.clicked.connect(self.export_xacro_clicked)
         export_buttons.addWidget(self.btn_export)
         export_buttons.addWidget(self.btn_export_xacro)
