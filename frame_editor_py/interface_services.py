@@ -162,6 +162,8 @@ class FrameEditor_Services(Interface):
                   FromPoint(request.pose.position),
                   FromQuaternion(request.pose.orientation),
                   request.parent)
+        if request.name in self.editor.frames:
+            f.joint = self.editor.frames[request.name].joint  # the request cannot change the joint
         self.editor.command(Command_AddElement(self.editor, f))
         
         response.error_code = 0

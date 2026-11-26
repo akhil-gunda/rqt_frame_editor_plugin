@@ -124,7 +124,7 @@ def test_diff_add_and_remove():
 
 
 @pytest.mark.parametrize("old,new,message", [
-    ('type="fixed"', 'type="revolute"', "only type"),
+    ('type="fixed"', 'type="continuous"', "only type"),
     ("<visual>", "<inertial/><visual>", "inertial"),
     ('<sphere radius="0.05"/>', '<capsule radius="0.05" length="1"/>', "capsule"),
     ('<sphere radius="0.05"/>', '<cylinder radius="0.05"/>', "cylinder length"),

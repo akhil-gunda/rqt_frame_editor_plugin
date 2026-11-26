@@ -12,6 +12,7 @@ from rclpy.node import Node
 from rclpy.parameter import Parameter
 from ament_index_python import get_package_share_directory
 
+from frame_editor_py import urdf_model
 from frame_editor_py.objects import *
 from frame_editor_py.commands import *
 
@@ -221,6 +222,12 @@ class FrameEditor(QtCore.QObject):
             else:
                 f = Frame(name, position, orientation, frame["parent"], group=group)
 
+            try:
+                f.joint = urdf_model.joint_from_dict(frame.get("joint"))
+            except (ValueError, TypeError) as error:
+                self.node.get_logger().error(
+                    "Frame '{}': invalid joint, loaded as fixed: {}".format(name, error))
+
             self.command(Command_AddElement(self, f))
 
         self.undo_stack.endMacro()
@@ -252,6 +259,8 @@ class FrameEditor(QtCore.QObject):
 
             f["style"] = frame.style
             f["group"] = frame.group
+            if frame.joint is not None:  # fixed joints are not written: old files stay unchanged
+                f["joint"] = urdf_model.joint_to_dict(frame.joint)
 
             if frame.style == "plane":
                 f["data"] = { "length": frame.length, "width":frame.width, "color": [float(c) for c in frame.color] }

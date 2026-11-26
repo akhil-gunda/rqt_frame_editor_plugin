@@ -394,6 +394,7 @@ class Command_SetStyle(QUndoCommand):
             self.new_element = Object_Mesh(element.name, element.position, element.orientation, element.parent, group=element.group)
         else:
             self.new_element = Frame(element.name, element.position, element.orientation, element.parent, group=element.group)
+        self.new_element.joint = element.joint  # the joint does not depend on the shape
 
         if editor.active_frame is element:
             self.was_active = True
@@ -425,6 +426,27 @@ class Command_SetStyle(QUndoCommand):
         if self.was_active:
             self.editor.active_frame = self.old_element
             self.editor.add_undo_level(2)
+
+
+class Command_SetJoint(QUndoCommand):
+    '''Sets how a frame is attached to its parent: None (fixed) or a urdf_model.Joint
+    '''
+
+    def __init__(self, editor, element, joint):
+        QUndoCommand.__init__(self, "Joint")
+        self.editor = editor
+
+        self.element = element
+        self.old_joint = element.joint
+        self.new_joint = joint
+
+    def redo(self):
+        self.element.joint = self.new_joint
+        self.editor.add_undo_level(4, [self.element])
+
+    def undo(self):
+        self.element.joint = self.old_joint
+        self.editor.add_undo_level(4, [self.element])
 
 
 class Command_SetStyleColor(QUndoCommand):

@@ -39,6 +39,7 @@ class Frame(object):
         self.color = (0.0, 0.5, 0.5, 0.75)
         self.group = group
         self.pinned_frame = None
+        self.joint = None  # None = fixed to the parent, else a urdf_model.Joint
 
         self.hidden = False
         self.marker = None

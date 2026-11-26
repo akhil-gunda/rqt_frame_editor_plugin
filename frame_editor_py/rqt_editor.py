@@ -21,7 +21,7 @@ from frame_editor_py.project_plugin import ProjectPlugin
 from frame_editor_py.interface import Interface
 
 ## Views
-from frame_editor_py.interface_gui import FrameEditor_StyleWidget, get_package_name_from_path, get_rel_path_in_ros2
+from frame_editor_py.interface_gui import FrameEditor_StyleWidget, FrameEditor_JointWidget, get_package_name_from_path, get_rel_path_in_ros2
 from frame_editor_py.interface_urdf import FrameEditor_URDFPanel
 from ament_index_python.packages import get_package_share_directory
 
@@ -118,6 +118,11 @@ class FrameEditorGUI(ProjectPlugin, Interface):
         self.interface_style = FrameEditor_StyleWidget(self.editor)
 
         widget.style_frame.layout().addWidget(self.interface_style.get_widget())
+
+        # Below the measurement tool, where there is room: the left column is already full height
+        self.interface_joint = FrameEditor_JointWidget(self.editor)
+        joint_column = widget.findChild(QtWidgets.QVBoxLayout, "verticalLayout_9")
+        joint_column.addWidget(self.interface_joint.get_widget())
 
         self.interface_urdf = FrameEditor_URDFPanel(self.editor)
         main_row = widget.findChild(QtWidgets.QHBoxLayout, "horizontalLayout_3") or widget.layout()

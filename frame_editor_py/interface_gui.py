@@ -5,9 +5,11 @@ from python_qt_binding.QtCore import Slot
 from python_qt_binding.QtGui import QColor
 
 from frame_editor_py.commands import *
+from frame_editor_py import urdf_model
 
 from frame_editor_py.interface import Interface
 from ament_index_python import get_package_share_directory
+import math
 import os
 
 
@@ -33,6 +35,144 @@ def get_rel_path_in_ros2(file_path, package_name):
     # Calculate the relative path
     rel_path = os.path.relpath(file_path, rospackage_path)
     return rel_path
+
+class _ShortDoubleSpinBox(QtWidgets.QDoubleSpinBox):
+    """Shows 1.57 instead of 1.570000, so three boxes fit in one row."""
+
+    def textFromValue(self, value):
+        text = super(_ShortDoubleSpinBox, self).textFromValue(value)
+        point = self.locale().decimalPoint()
+        return text.rstrip("0").rstrip(point) if point in text else text
+
+
+class FrameEditor_JointWidget(Interface):
+    """How the selected frame is attached to its parent: fixed, or a revolute joint (hinge)."""
+
+    # (label, [(attribute, minimum, maximum, step), ...]): one panel row each
+    ROWS = [("Axis x y z:", [("axis_x", -1000.0, 1000.0, 1.0),
+                             ("axis_y", -1000.0, 1000.0, 1.0),
+                             ("axis_z", -1000.0, 1000.0, 1.0)]),
+            ("Limits (rad):", [("lower", -1000.0, 1000.0, 0.1),
+                               ("upper", -1000.0, 1000.0, 0.1)]),
+            ("Effort, speed:", [("effort", 0.0, 1000000.0, 1.0),
+                                ("velocity", 0.0, 1000000.0, 0.1)])]
+    DECIMALS = 6
+    TIPS = {"axis_x": "Axis X: the joint turns around this axis, given in this frame's coordinates",
+            "axis_y": "Axis Y: the joint turns around this axis, given in this frame's coordinates",
+            "axis_z": "Axis Z: the joint turns around this axis, given in this frame's coordinates",
+            "lower": "Smallest angle in radians. 0 is the pose entered for this frame",
+            "upper": "Largest angle in radians (1.570796 = 90 degrees)",
+            "effort": "Effort: maximum torque in Nm",
+            "velocity": "Velocity: maximum speed in rad/s"}
+
+    def __init__(self, frame_editor):
+        self.editor = frame_editor
+        self.editor.observers.append(self)
+
+        self.widget = QWidget()
+        layout = QtWidgets.QGridLayout()
+        layout.setContentsMargins(4, 4, 4, 4)
+        self.widget.setLayout(layout)
+
+        self.type_combo = QtWidgets.QComboBox()
+        self.type_combo.addItems(urdf_model.JOINT_TYPES)
+        self.type_combo.setToolTip("Joint between the parent frame and this frame (URDF only: "
+                                   "the editor always shows the frame at angle 0)")
+        self.type_combo.activated.connect(lambda _: self.type_changed())
+        layout.addWidget(QtWidgets.QLabel("Joint:"), 0, 0)
+        layout.addWidget(self.type_combo, 0, 1)
+
+        self.labels, self.spinboxes = [], {}
+        for row, (text, fields) in enumerate(self.ROWS, 1):
+            label = QtWidgets.QLabel(text)
+            boxes = QtWidgets.QHBoxLayout()
+            for key, low, high, step in fields:
+                spinbox = _ShortDoubleSpinBox()
+                spinbox.setDecimals(self.DECIMALS)
+                spinbox.setRange(low, high)
+                spinbox.setSingleStep(step)
+                spinbox.setButtonSymbols(QtWidgets.QAbstractSpinBox.NoButtons)
+                spinbox.setSizePolicy(QtWidgets.QSizePolicy.Ignored, QtWidgets.QSizePolicy.Fixed)
+                spinbox.setMinimumWidth(48)
+                spinbox.setToolTip(self.TIPS[key])
+                spinbox.editingFinished.connect(lambda key=key: self.value_changed(key))
+                boxes.addWidget(spinbox)
+                self.spinboxes[key] = spinbox
+            layout.addWidget(label, row, 0)
+            layout.addLayout(boxes, row, 1)
+            self.labels.append(label)
+
+        self.info = QtWidgets.QLabel()
+        self.info.setWordWrap(True)
+        layout.addWidget(self.info, len(self.ROWS) + 1, 0, 1, 2)
+
+        self.update_values(None)
+
+    def get_widget(self):
+        return self.widget
+
+    def update(self, editor, level, elements):
+        if level & (2 + 4):
+            self.update_values(self.editor.active_frame)
+
+    @staticmethod
+    def _values(joint):
+        return {"axis_x": joint.axis[0], "axis_y": joint.axis[1], "axis_z": joint.axis[2],
+                "lower": joint.lower, "upper": joint.upper,
+                "effort": joint.effort, "velocity": joint.velocity}
+
+    def update_values(self, frame):
+        self.widget.setEnabled(frame is not None)
+        joint = frame.joint if frame is not None else None
+
+        self.type_combo.setCurrentText(joint.type if joint else "fixed")
+        for label in self.labels:
+            label.setVisible(joint is not None)
+        for key, spinbox in self.spinboxes.items():
+            spinbox.setVisible(joint is not None)
+            if joint is not None:
+                spinbox.blockSignals(True)
+                spinbox.setValue(self._values(joint)[key])
+                spinbox.blockSignals(False)
+
+        self.info.setStyleSheet("")
+        self.info.setVisible(joint is not None)
+        if joint is not None:
+            self.info.setText("Range: {:.1f}\u00b0 to {:.1f}\u00b0".format(
+                math.degrees(joint.lower), math.degrees(joint.upper)))
+
+    def type_changed(self):
+        frame = self.editor.active_frame
+        if frame is None:
+            return
+        kind = self.type_combo.currentText()
+        if kind == (frame.joint.type if frame.joint else "fixed"):
+            return
+        joint = urdf_model.DEFAULT_REVOLUTE if kind == "revolute" else None
+        self.editor.command(Command_SetJoint(self.editor, frame, joint))
+
+    def value_changed(self, key):
+        frame = self.editor.active_frame
+        if frame is None or frame.joint is None:
+            return
+        values = self._values(frame.joint)
+        new = self.spinboxes[key].value()
+        # The box shows rounded numbers: only a real edit may change the stored value
+        if abs(values[key] - new) <= 0.51 * 10 ** -self.DECIMALS:
+            return
+        values[key] = new
+        joint = frame.joint._replace(
+            axis=(values["axis_x"], values["axis_y"], values["axis_z"]),
+            lower=values["lower"], upper=values["upper"],
+            effort=values["effort"], velocity=values["velocity"])
+        error = urdf_model.joint_error(joint)
+        if error:
+            self.update_values(frame)  # back to the stored values
+            self.info.setStyleSheet("QLabel { color: red; }")
+            self.info.setText("Not changed: {}.".format(error))
+            return
+        self.editor.command(Command_SetJoint(self.editor, frame, joint))
+
 
 class FrameEditor_StyleWidget(Interface):
 

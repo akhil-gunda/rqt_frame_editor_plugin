@@ -8,7 +8,8 @@ Everything is checked first; then all changes are pushed as one undo macro
 from frame_editor_py.commands import (Command_AddElement, Command_RemoveElement,
                                       Command_SetParent, Command_SetPose,
                                       Command_SetStyle, Command_SetGeometry,
-                                      Command_SetSize, Command_SetStyleColor)
+                                      Command_SetSize, Command_SetStyleColor,
+                                      Command_SetJoint)
 from frame_editor_py.objects import (Frame, Object_Cube, Object_Plane,
                                      Object_Sphere, Object_Cylinder, Object_Mesh)
 from frame_editor_py import urdf_model as um
@@ -56,6 +57,7 @@ def new_element(spec):
         element = Frame(*args)
     if spec.geometry is not None:
         element.set_color(spec.color)
+    element.joint = spec.joint
     return element
 
 
@@ -128,6 +130,9 @@ def _apply_one(editor, change):
 
     elif change.kind == "pose":
         editor.command(Command_SetPose(editor, editor.frames[name], spec.position, spec.orientation))
+
+    elif change.kind == "joint":
+        editor.command(Command_SetJoint(editor, editor.frames[name], spec.joint))
 
     elif change.kind == "geometry":
         style, attrs = style_of(spec.geometry)

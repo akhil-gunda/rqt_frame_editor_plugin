@@ -100,7 +100,7 @@ def test_invalid_text_changes_nothing(editor):
     before = urdf(editor)
     index = editor.undo_stack.index()
     with pytest.raises(URDFError):
-        urdf_apply.apply(editor, before.replace('type="fixed"', 'type="revolute"', 1))
+        urdf_apply.apply(editor, before.replace('type="fixed"', 'type="prismatic"', 1))
     # drop frame1's joint: frame1 would become a root, but it is an editor frame
     start = before.index('<joint name="world_to_frame1"')
     end = before.index("</joint>", start) + len("</joint>")

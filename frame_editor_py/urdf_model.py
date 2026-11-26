@@ -5,7 +5,9 @@ Pure Python: no ROS or Qt imports, so it can be unit tested on its own.
 
 Mapping (frame editor -> URDF):
     frame name                     -> <link name>
-    parent + position + orientation -> fixed <joint> with <origin xyz rpy>
+    parent + position + orientation -> <joint> with <origin xyz rpy>
+    joint None                         -> type="fixed"
+    joint Joint(...)                   -> type="revolute" with <axis> and <limit>
     style cube   (length/width/height) -> <box size="l w h"/>
     style plane  (length/width)        -> thin <box>, see PLANE_THICKNESS
     style sphere (diameter)            -> <sphere radius="d/2"/>
@@ -18,6 +20,7 @@ Parents that are not editor frames (e.g. "world") become empty root links.
 
 import math
 import re
+from collections import namedtuple
 import xml.etree.ElementTree as ET
 from xml.sax.saxutils import quoteattr
 
@@ -30,11 +33,65 @@ SIZE_TOL = 1e-6
 COLOR_TOL = 1e-3
 
 
+## Joints ##
+##
+# A frame without a Joint (None) is attached to its parent by a fixed joint. The frame pose is the
+# joint origin, i.e. where the frame is when the joint is at angle 0. Angles are in radians.
+Joint = namedtuple("Joint", "type axis lower upper effort velocity")
+JOINT_TYPES = ("fixed", "revolute")
+DEFAULT_REVOLUTE = Joint("revolute", (0.0, 0.0, 1.0), 0.0, 1.570796, 10.0, 1.0)
+
+
+def joint_error(joint):
+    """Why this joint is not valid, or None if it is fine."""
+    if joint is None:
+        return None
+    if joint.type != "revolute":
+        return "unknown joint type '{}'".format(joint.type)
+    values = list(joint.axis) + [joint.lower, joint.upper, joint.effort, joint.velocity]
+    if len(joint.axis) != 3 or not all(math.isfinite(v) for v in values):
+        return "the joint needs three axis values and finite numbers"
+    if math.sqrt(sum(v * v for v in joint.axis)) < 1e-6:
+        return "the axis must not be 0 0 0"
+    if joint.lower > joint.upper:
+        return "the lower limit must not be above the upper limit"
+    if joint.effort < 0 or joint.velocity < 0:
+        return "effort and velocity must not be negative"
+    return None
+
+
+def joint_to_dict(joint):
+    """Joint -> plain types, for the YAML file."""
+    return {"type": joint.type, "axis": [float(v) for v in joint.axis],
+            "lower": float(joint.lower), "upper": float(joint.upper),
+            "effort": float(joint.effort), "velocity": float(joint.velocity)}
+
+
+def joint_from_dict(data):
+    """YAML data -> Joint or None (fixed). Raises ValueError if it is not valid."""
+    if not data or data.get("type", "fixed") == "fixed":
+        return None
+    d = joint_to_dict(DEFAULT_REVOLUTE)
+    d.update(data)
+    joint = Joint(d["type"], tuple(float(v) for v in d["axis"]), float(d["lower"]),
+                  float(d["upper"]), float(d["effort"]), float(d["velocity"]))
+    if joint_error(joint):
+        raise ValueError(joint_error(joint))
+    return joint
+
+
+def _joint_equal(a, b):
+    if a is None or b is None:
+        return a is None and b is None
+    numbers = lambda j: list(j.axis) + [j.lower, j.upper, j.effort, j.velocity]
+    return a.type == b.type and all(abs(x - y) < ANG_TOL for x, y in zip(numbers(a), numbers(b)))
+
+
 class FrameSpec(object):
     """What URDF can say about one editor frame."""
 
     def __init__(self, name, parent, position=(0.0, 0.0, 0.0),
-                 orientation=(0.0, 0.0, 0.0, 1.0), geometry=None, color=None):
+                 orientation=(0.0, 0.0, 0.0, 1.0), geometry=None, color=None, joint=None):
         self.name = name
         self.parent = parent
         self.position = tuple(float(v) for v in position)
@@ -43,6 +100,7 @@ class FrameSpec(object):
         # | ("mesh", filename, scale)
         self.geometry = geometry
         self.color = tuple(float(c) for c in color) if color is not None else None
+        self.joint = joint  # None (fixed) or Joint
 
     def __repr__(self):
         return "FrameSpec({!r}, parent={!r}, pos={}, quat={}, geom={}, color={})".format(
@@ -138,7 +196,8 @@ def frame_to_spec(frame):
     elif style == "mesh" and getattr(frame, "path", ""):
         geometry = ("mesh", mesh_uri(frame.package or "", frame.path), frame.scale)
     color = frame.color if geometry is not None else None
-    return FrameSpec(frame.name, frame.parent, frame.position, frame.orientation, geometry, color)
+    return FrameSpec(frame.name, frame.parent, frame.position, frame.orientation, geometry, color,
+                     getattr(frame, "joint", None))
 
 
 def specs_from_frames(frames):
@@ -219,7 +278,7 @@ def _prepare(frames):
 
 
 def _frame_block(spec, style, link, parent, joint, collision, indent):
-    """Lines for one editor frame: its <link> and the fixed <joint> to its parent.
+    """Lines for one editor frame: its <link> and the <joint> to its parent.
 
     link, parent and joint are the names to write.
     """
@@ -246,11 +305,17 @@ def _frame_block(spec, style, link, parent, joint, collision, indent):
             out.append(i + "  </collision>")
         out.append(i + "</link>")
 
-    out.append(i + "<joint name={} type=\"fixed\">".format(quoteattr(joint)))
+    movable = spec.joint
+    out.append(i + "<joint name={} type=\"{}\">".format(
+        quoteattr(joint), movable.type if movable else "fixed"))
     out.append(i + "  <parent link={}/>".format(quoteattr(parent)))
     out.append(i + "  <child link={}/>".format(quoteattr(link)))
     out.append(i + '  <origin xyz="{}" rpy="{}"/>'.format(
         fmt_vec(spec.position), fmt_vec(quaternion_to_rpy(spec.orientation))))
+    if movable:
+        out.append(i + '  <axis xyz="{}"/>'.format(fmt_vec(movable.axis)))
+        out.append(i + '  <limit lower="{}" upper="{}" effort="{}" velocity="{}"/>'.format(
+            fmt(movable.lower), fmt(movable.upper), fmt(movable.effort), fmt(movable.velocity)))
     out.append(i + "</joint>")
     return out
 
@@ -442,6 +507,37 @@ def _parse_shape(element, name, what):
 
 SUPPORTED_LINK_TAGS = {"visual", "collision"}
 SUPPORTED_JOINT_TAGS = {"parent", "child", "origin"}
+REVOLUTE_JOINT_TAGS = {"axis", "limit"}
+
+
+def _parse_joint(joint, what):
+    """<joint> -> None (fixed) or Joint."""
+    kind = joint.get("type")
+    if kind not in JOINT_TYPES:
+        raise URDFError("{}: only type=\"fixed\" and \"revolute\" are supported, got '{}'".format(what, kind))
+    allowed = SUPPORTED_JOINT_TAGS | (REVOLUTE_JOINT_TAGS if kind == "revolute" else set())
+    seen = set()
+    for child in joint:
+        if child.tag not in allowed:
+            raise URDFError("{}: <{}> is not supported on a {} joint".format(what, child.tag, kind))
+        if child.tag in seen:
+            raise URDFError("{}: <{}> appears twice".format(what, child.tag))
+        seen.add(child.tag)
+    if kind == "fixed":
+        return None
+
+    axis_el, limit = joint.find("axis"), joint.find("limit")
+    # (1, 0, 0) is the URDF default when <axis> is left out
+    axis = (1.0, 0.0, 0.0) if axis_el is None else tuple(_floats(axis_el.get("xyz", ""), 3, what + " axis"))
+    if limit is None or limit.get("effort") is None or limit.get("velocity") is None:
+        raise URDFError("{}: a revolute joint needs <limit lower upper effort velocity>".format(what))
+    lower, upper, effort, velocity = [
+        _floats(limit.get(key, "0"), 1, "{} limit {}".format(what, key))[0]
+        for key in ("lower", "upper", "effort", "velocity")]
+    result = Joint(kind, axis, lower, upper, effort, velocity)
+    if joint_error(result):
+        raise URDFError("{}: {}".format(what, joint_error(result)))
+    return result
 
 
 def urdf_to_specs(text):
@@ -477,14 +573,11 @@ def urdf_to_specs(text):
 
     parent_of = {}
     origin_of = {}
+    movable_of = {}
     for joint in joints:
         jname = joint.get("name", "")
         what = "joint '{}'".format(jname)
-        if joint.get("type") != "fixed":
-            raise URDFError("{}: only type=\"fixed\" is supported, got '{}'".format(what, joint.get("type")))
-        for child in joint:
-            if child.tag not in SUPPORTED_JOINT_TAGS:
-                raise URDFError("{}: <{}> is not supported".format(what, child.tag))
+        movable = _parse_joint(joint, what)
         parent_el, child_el = joint.find("parent"), joint.find("child")
         if parent_el is None or child_el is None:
             raise URDFError("{}: needs <parent link> and <child link>".format(what))
@@ -498,6 +591,7 @@ def urdf_to_specs(text):
             raise URDFError("link '{}': names starting with '_' are reserved for temporary frames".format(child))
         parent_of[child] = parent
         origin_of[child] = _origin(joint, what)
+        movable_of[child] = movable
 
     specs = {}
     roots = []
@@ -512,7 +606,8 @@ def urdf_to_specs(text):
         xyz, rpy = origin_of[name]
         if geometry is not None and color is None:
             color = (0.0, 0.5, 0.5, 0.75)  # editor default
-        specs[name] = FrameSpec(name, parent_of[name], xyz, rpy_to_quaternion(rpy), geometry, color)
+        specs[name] = FrameSpec(name, parent_of[name], xyz, rpy_to_quaternion(rpy), geometry, color,
+                                movable_of[name])
 
     _, _, cyclic = tree_order(specs)
     if cyclic:
@@ -546,7 +641,7 @@ def _color_equal(a, b):
 
 class Change(object):
     def __init__(self, kind, name, spec=None):
-        self.kind = kind    # "remove" | "add" | "parent" | "pose" | "geometry" | "color"
+        self.kind = kind    # "remove" | "add" | "parent" | "pose" | "joint" | "geometry" | "color"
         self.name = name
         self.spec = spec
 
@@ -577,6 +672,8 @@ def diff_specs(current, wanted):
         if (any(abs(a - b) > POS_TOL for a, b in zip(old.position, new.position))
                 or not quaternions_equal(old.orientation, new.orientation)):
             changes.append(Change("pose", name, new))
+        if not _joint_equal(old.joint, new.joint):
+            changes.append(Change("joint", name, new))
         if not _geometry_equal(old.geometry, new.geometry):
             changes.append(Change("geometry", name, new))
         elif not _color_equal(old.color, new.color):
