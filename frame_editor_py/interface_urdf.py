@@ -31,15 +31,53 @@ def generate_urdf(editor):
                              collision=getattr(editor, "urdf_collision", False))
 
 
+def _blocks(lines):
+    """Split URDF lines into blocks of (key, first line, lines): header, one per link, footer.
+
+    A frame's block is its <link> and what follows (its <joint>); blank lines and
+    comments just above a <link> belong to it.
+    """
+    starts = [(0, "header")]
+    for i, line in enumerate(lines):
+        text = line.strip()
+        match = re.match(r'<link\s+name="([^"]*)"', text)
+        if not match and text != "</robot>":
+            continue
+        first = i
+        while first > 0 and (not lines[first - 1].strip() or lines[first - 1].strip().startswith("<!--")):
+            first -= 1
+        starts.append((first, "link " + match.group(1) if match else "footer"))
+    ends = [first for first, _ in starts[1:]] + [len(lines)]
+    return [(key, first, lines[first:end]) for (first, key), end in zip(starts, ends)]
+
+
 def changed_lines(old_text, new_text):
-    """Line numbers (0-based) in new_text that are new or changed, and how many old lines were removed."""
-    old_lines, new_lines = old_text.splitlines(), new_text.splitlines()
+    """Line numbers (0-based) in new_text that are new or changed, and how many old lines were removed.
+
+    Compared block by block, matched by link name. A plain line diff of the whole file
+    marks the wrong lines, because every joint ends in the same few lines.
+    Blank lines are ignored.
+    """
+    old_blocks, new_blocks = _blocks(old_text.splitlines()), _blocks(new_text.splitlines())
+    old_by_key = {key: lines for key, _, lines in old_blocks}
+    new_keys = {key for key, _, _ in new_blocks}
     changed, removed = [], 0
-    for tag, i1, i2, j1, j2 in difflib.SequenceMatcher(None, old_lines, new_lines, autojunk=False).get_opcodes():
-        if tag in ("replace", "insert"):
-            changed.extend(range(j1, j2))
-        if tag in ("replace", "delete"):
-            removed += max(0, (i2 - i1) - (j2 - j1))
+
+    for key, first, new_lines in new_blocks:
+        old_lines = old_by_key.get(key, [])
+        # positions of the non-blank lines, so blank lines take no part in the comparison
+        old_kept = [l for l in old_lines if l.strip()]
+        new_kept = [(first + i, l) for i, l in enumerate(new_lines) if l.strip()]
+        matcher = difflib.SequenceMatcher(None, old_kept, [l for _, l in new_kept], autojunk=False)
+        for tag, i1, i2, j1, j2 in matcher.get_opcodes():
+            if tag in ("replace", "insert"):
+                changed.extend(number for number, _ in new_kept[j1:j2])
+            if tag in ("replace", "delete"):
+                removed += max(0, (i2 - i1) - (j2 - j1))
+
+    for key, _, old_lines in old_blocks:
+        if key not in new_keys:
+            removed += sum(1 for l in old_lines if l.strip())
     return changed, removed
 
 
@@ -266,7 +304,7 @@ class FrameEditor_URDFPanel(Interface):
 
         status = "Live: {} frames".format(len(self.editor.frames))
         if changed or removed:
-            status += " | last edit: {} line(s) changed or added, {} removed".format(len(changed), removed)
+            status += " | yellow: {} line(s) changed or added; {} removed".format(len(changed), removed)
         if warnings:
             self.show_status(status + "\n" + "\n".join(warnings), warn=True)
         else:
@@ -283,11 +321,11 @@ class FrameEditor_URDFPanel(Interface):
         for line in line_numbers:
             selection = QtWidgets.QTextEdit.ExtraSelection()
             selection.format = fmt
-            selection.cursor = QtGui.QTextCursor(document.findBlockByLineNumber(line))
+            selection.cursor = QtGui.QTextCursor(document.findBlockByNumber(line))
             selections.append(selection)
         self.text.setExtraSelections(selections)
         if line_numbers:
-            self.text.setTextCursor(QtGui.QTextCursor(document.findBlockByLineNumber(line_numbers[0])))
+            self.text.setTextCursor(QtGui.QTextCursor(document.findBlockByNumber(line_numbers[0])))
             self.text.ensureCursorVisible()
 
     @Slot()
@@ -325,7 +363,7 @@ class FrameEditor_URDFPanel(Interface):
     @Slot()
     def discard_clicked(self):
         self.set_dirty(False)
-        self.refresh(highlight=False)
+        self.refresh()  # highlights where the rewritten code differs from the user's code
 
     @Slot()
     def export_clicked(self):
