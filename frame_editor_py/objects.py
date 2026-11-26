@@ -211,6 +211,23 @@ class Object_Sphere(Object_Geometry):
         self.marker.scale = NewVector3(self.diameter, self.diameter, self.diameter)
 
 
+class Object_Cylinder(Object_Geometry):
+    """Round along X/Y, `height` along the frame's Z axis, centred on the frame (as in URDF)."""
+
+    def __init__(self, name, position, orientation, parent, diameter=1.0, height=1.0, group=""):
+
+        self.diameter = diameter
+        self.height = height
+
+        super(Object_Cylinder, self).__init__(name, position, orientation, parent, "cylinder", group)
+
+    def update_marker(self):
+        super(Object_Cylinder, self).update_marker()
+
+        self.marker.type = Marker.CYLINDER
+        self.marker.scale = NewVector3(self.diameter, self.diameter, self.height)
+
+
 class Object_Axis(Object_Geometry):
 
     def __init__(self, name, position, orientation, parent, length=1.0, width=0.05, group=""):

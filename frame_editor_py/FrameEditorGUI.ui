@@ -682,6 +682,11 @@
                </item>
                <item>
                 <property name="text">
+                 <string>cylinder</string>
+                </property>
+               </item>
+               <item>
+                <property name="text">
                  <string>axis</string>
                 </property>
                </item>

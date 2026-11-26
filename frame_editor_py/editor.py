@@ -209,6 +209,9 @@ class FrameEditor(QtCore.QObject):
             elif style == "sphere":
                 f = Object_Sphere(name, position, orientation, frame["parent"], dat["diameter"])
                 f.set_color(color)
+            elif style == "cylinder":
+                f = Object_Cylinder(name, position, orientation, frame["parent"], dat["diameter"], dat["height"])
+                f.set_color(color)
             elif style == "axis":
                 f = Object_Axis(name, position, orientation, frame["parent"], dat["length"], dat["width"])
                 f.set_color(color)
@@ -258,6 +261,9 @@ class FrameEditor(QtCore.QObject):
 
             elif frame.style == "sphere":
                 f["data"] = { "diameter": frame.diameter, "color": [float(c) for c in frame.color] }
+
+            elif frame.style == "cylinder":
+                f["data"] = { "diameter": frame.diameter, "height": frame.height, "color": [float(c) for c in frame.color] }
 
             elif frame.style == "axis":
                 f["data"] = { "length": frame.length, "width": frame.width, "color": [float(c) for c in frame.color] }

@@ -9,6 +9,7 @@ Mapping (frame editor -> URDF):
     style cube   (length/width/height) -> <box size="l w h"/>
     style plane  (length/width)        -> thin <box>, see PLANE_THICKNESS
     style sphere (diameter)            -> <sphere radius="d/2"/>
+    style cylinder (diameter/height)   -> <cylinder radius="d/2" length="height"/>
     style mesh   (package/path/scale)  -> <mesh filename="package://..." scale/>
     style axis / none                  -> link without <visual>
     color                              -> <material><color rgba/></material>
@@ -38,7 +39,8 @@ class FrameSpec(object):
         self.parent = parent
         self.position = tuple(float(v) for v in position)
         self.orientation = tuple(float(v) for v in orientation)
-        # None | ("box", (l, w, h)) | ("sphere", radius) | ("mesh", filename, scale)
+        # None | ("box", (l, w, h)) | ("sphere", radius) | ("cylinder", radius, length)
+        # | ("mesh", filename, scale)
         self.geometry = geometry
         self.color = tuple(float(c) for c in color) if color is not None else None
 
@@ -131,6 +133,8 @@ def frame_to_spec(frame):
         geometry = ("box", (frame.length, frame.width, PLANE_THICKNESS))
     elif style == "sphere":
         geometry = ("sphere", frame.diameter / 2.0)
+    elif style == "cylinder":
+        geometry = ("cylinder", frame.diameter / 2.0, frame.height)
     elif style == "mesh" and getattr(frame, "path", ""):
         geometry = ("mesh", mesh_uri(frame.package or "", frame.path), frame.scale)
     color = frame.color if geometry is not None else None
@@ -183,6 +187,8 @@ def _geometry_lines(geometry, indent):
         shape = '<box size="{}"/>'.format(fmt_vec(geometry[1]))
     elif kind == "sphere":
         shape = '<sphere radius="{}"/>'.format(fmt(geometry[1]))
+    elif kind == "cylinder":
+        shape = '<cylinder radius="{}" length="{}"/>'.format(fmt(geometry[1]), fmt(geometry[2]))
     else:
         shape = '<mesh filename={} scale="{}"/>'.format(quoteattr(geometry[1]), fmt_vec((geometry[2],) * 3))
     return [indent + "<geometry>", indent + "  " + shape, indent + "</geometry>"]
@@ -424,6 +430,10 @@ def _parse_shape(element, name, what):
         geometry = ("box", tuple(_floats(shape.get("size", ""), 3, "link '{}' box size".format(name))))
     elif shape.tag == "sphere":
         geometry = ("sphere", _floats(shape.get("radius", ""), 1, "link '{}' sphere radius".format(name))[0])
+    elif shape.tag == "cylinder":
+        geometry = ("cylinder",
+                    _floats(shape.get("radius", ""), 1, "link '{}' cylinder radius".format(name))[0],
+                    _floats(shape.get("length", ""), 1, "link '{}' cylinder length".format(name))[0])
     elif shape.tag == "mesh":
         filename = shape.get("filename", "")
         if not filename:
@@ -433,7 +443,7 @@ def _parse_shape(element, name, what):
             raise URDFError("link '{}': the editor only supports a uniform mesh scale".format(name))
         geometry = ("mesh", filename, scale[0])
     else:
-        raise URDFError("link '{}': <{}> is not supported (use box, sphere or mesh)".format(name, shape.tag))
+        raise URDFError("link '{}': <{}> is not supported (use box, sphere, cylinder or mesh)".format(name, shape.tag))
     return geometry
 
 
@@ -528,6 +538,8 @@ def _geometry_equal(a, b):
         return all(abs(x - y) < SIZE_TOL for x, y in zip(a[1], b[1]))
     if a[0] == "sphere":
         return abs(a[1] - b[1]) < SIZE_TOL
+    if a[0] == "cylinder":
+        return abs(a[1] - b[1]) < SIZE_TOL and abs(a[2] - b[2]) < SIZE_TOL
     if a[0] == "mesh":
         return a[1] == b[1] and abs(a[2] - b[2]) < SIZE_TOL
     return False

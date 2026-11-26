@@ -386,6 +386,8 @@ class Command_SetStyle(QUndoCommand):
             self.new_element = Object_Cube(element.name, element.position, element.orientation, element.parent, group=element.group)
         elif style == "sphere":
             self.new_element = Object_Sphere(element.name, element.position, element.orientation, element.parent, group=element.group)
+        elif style == "cylinder":
+            self.new_element = Object_Cylinder(element.name, element.position, element.orientation, element.parent, group=element.group)
         elif style == "axis":
             self.new_element = Object_Axis(element.name, element.position, element.orientation, element.parent, group=element.group)
         elif style == "mesh":

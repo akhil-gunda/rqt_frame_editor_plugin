@@ -126,7 +126,8 @@ def test_diff_add_and_remove():
 @pytest.mark.parametrize("old,new,message", [
     ('type="fixed"', 'type="revolute"', "only type"),
     ("<visual>", "<inertial/><visual>", "inertial"),
-    ('<sphere radius="0.05"/>', '<cylinder radius="0.05" length="1"/>', "cylinder"),
+    ('<sphere radius="0.05"/>', '<capsule radius="0.05" length="1"/>', "capsule"),
+    ('<sphere radius="0.05"/>', '<cylinder radius="0.05"/>', "cylinder length"),
     ('<parent link="table"/>', '<parent link="nope"/>', "not defined"),
     ('<link name="world"/>', '<link name="world"><visual><geometry><box size="1 1 1"/></geometry></visual></link>', "root link"),
     ('<sphere radius="0.05"/>', '<sphere radius="0.05"/><box size="1 1 1"/>', "exactly one shape"),
@@ -178,3 +179,15 @@ def test_collision_without_visual_rejected():
                   '<link name="robot_base"><collision><geometry><box size="1 1 1"/></geometry></collision></link>')
     with pytest.raises(URDFError, match="needs a matching <visual>"):
         um.urdf_to_specs(text)
+
+
+def test_cylinder_export_roundtrip_and_diff():
+    frames = [frame("post", "world", style="cylinder", diameter=0.1, height=2.0)]
+    text, warnings = um.frames_to_urdf(frames, collision=True)
+    assert text.count('<cylinder radius="0.05" length="2"/>') == 2  # visual and collision
+    assert warnings == []
+    current = um.specs_from_frames(frames)
+    assert um.diff_specs(current, um.urdf_to_specs(text)[0]) == []
+    for old, new in [('radius="0.05"', 'radius="0.2"'), ('length="2"', 'length="1.5"')]:
+        wanted, _ = um.urdf_to_specs(text.replace(old, new))
+        assert [(c.kind, c.name) for c in um.diff_specs(current, wanted)] == [("geometry", "post")]

@@ -10,7 +10,7 @@ from frame_editor_py.commands import (Command_AddElement, Command_RemoveElement,
                                       Command_SetStyle, Command_SetGeometry,
                                       Command_SetSize, Command_SetStyleColor)
 from frame_editor_py.objects import (Frame, Object_Cube, Object_Plane,
-                                     Object_Sphere, Object_Mesh)
+                                     Object_Sphere, Object_Cylinder, Object_Mesh)
 from frame_editor_py import urdf_model as um
 from frame_editor_py.urdf_model import URDFError
 
@@ -31,6 +31,8 @@ def style_of(geometry):
         return "cube", {"length": l, "width": w, "height": h}
     if kind == "sphere":
         return "sphere", {"diameter": 2.0 * geometry[1]}
+    if kind == "cylinder":
+        return "cylinder", {"diameter": 2.0 * geometry[1], "height": geometry[2]}
     if kind == "mesh":
         package, path = um.split_mesh_uri(geometry[1])
         return "mesh", {"package": package, "path": path, "scale": geometry[2]}
@@ -46,6 +48,8 @@ def new_element(spec):
         element = Object_Plane(*args, length=a["length"], width=a["width"])
     elif style == "sphere":
         element = Object_Sphere(*args, diameter=a["diameter"])
+    elif style == "cylinder":
+        element = Object_Cylinder(*args, diameter=a["diameter"], height=a["height"])
     elif style == "mesh":
         element = Object_Mesh(*args, package=a["package"], mesh_path=a["path"], scale=a["scale"])
     else:

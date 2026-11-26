@@ -193,3 +193,51 @@ def test_panel_exports_xacro_pair(editor, tmp_path):
     assert panel.export_xacro_to(str(tmp_path / "cell.xacro"))
     expanded = xacro.process_file(str(tmp_path / "cell.urdf.xacro")).toxml()
     assert 'name="frames_base"' in expanded and 'name="frame_sphere"' in expanded
+
+
+def test_cylinder_in_panel_apply_yaml_and_marker(editor, tmp_path):
+    from visualization_msgs.msg import Marker
+    from frame_editor_py.commands import Command_SetStyle, Command_SetGeometry
+    from frame_editor_py.interface_gui import FrameEditor_StyleWidget
+
+    widget = FrameEditor_StyleWidget(editor)
+    editor.command(Command_SetStyle(editor, editor.frames["frame1"], "cylinder"))
+    editor.command(Command_SetGeometry(editor, editor.frames["frame1"], "diameter", 0.2))
+    editor.command(Command_SetGeometry(editor, editor.frames["frame1"], "height", 1.5))
+    frame1 = editor.frames["frame1"]
+    assert frame1.marker.type == Marker.CYLINDER
+    assert (frame1.marker.scale.x, frame1.marker.scale.y, frame1.marker.scale.z) == (0.2, 0.2, 1.5)
+
+    editor.active_frame = frame1
+    widget.update_widget(frame1)
+    widget.update_values(frame1)
+    shown = {n for n in ("diameter", "length", "width", "height", "size")
+             if not getattr(widget, n + "_spinbox").isHidden()}
+    assert shown == {"diameter", "height"}
+    assert (widget.diameter_spinbox.value(), widget.height_spinbox.value()) == (0.2, 1.5)
+
+    # URDF text -> editor, both on an existing cylinder and on a cube turned into one
+    text = urdf(editor).replace('<cylinder radius="0.1" length="1.5"/>',
+                                '<cylinder radius="0.3" length="0.5"/>')
+    urdf_apply.apply(editor, text)
+    assert (editor.frames["frame1"].diameter, editor.frames["frame1"].height) == pytest.approx((0.6, 0.5))
+    text = urdf(editor).replace(
+        '<link name="frame_cube"/>',
+        '<link name="frame_cube"><visual><geometry><cylinder radius="0.05" length="2"/>'
+        '</geometry></visual></link>')
+    urdf_apply.apply(editor, text)
+    assert editor.frames["frame_cube"].style == "cylinder"
+    assert urdf_apply.apply(editor, urdf(editor)) == []
+
+    # YAML save and reload keeps the shape and colour
+    path = str(tmp_path / "cyl.yaml")
+    editor.save_file(path)
+    from frame_editor_py.editor import FrameEditor
+    other = FrameEditor(Ctx())
+    try:
+        other.load_file(path)
+        assert other.frames["frame_cube"].style == "cylinder"
+        assert um.frames_to_urdf(list(other.frames.values()))[0] \
+            == um.frames_to_urdf(list(editor.frames.values()))[0]
+    finally:
+        other.node.destroy_node()

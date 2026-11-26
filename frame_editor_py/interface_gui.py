@@ -157,6 +157,11 @@ class FrameEditor_StyleWidget(Interface):
         elif frame.style == "sphere":
             self.diameter_label.show()
             self.diameter_spinbox.show()
+        elif frame.style == "cylinder":
+            self.diameter_label.show()
+            self.diameter_spinbox.show()
+            self.height_label.show()
+            self.height_spinbox.show()
         else:
             self.length_label.show()
             self.length_spinbox.show()
@@ -177,6 +182,9 @@ class FrameEditor_StyleWidget(Interface):
             self.size_spinbox.setValue(frame.scale)
         elif frame.style == "sphere":
             self.diameter_spinbox.setValue(frame.diameter)
+        elif frame.style == "cylinder":
+            self.diameter_spinbox.setValue(frame.diameter)
+            self.height_spinbox.setValue(frame.height)
         else:
             self.length_spinbox.setValue(frame.length)
             self.width_spinbox.setValue(frame.width)
